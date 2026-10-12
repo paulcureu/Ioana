@@ -1,0 +1,26 @@
+{
+  "name": "portofoliu-carte",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Portofoliul studențesc al Ioanei Nicola Bude, deschis ca o carte (flipbook) — Next.js",
+  "scripts": {
+    "dev": "next dev",
+    "build": "next build",
+    "start": "next start"
+  },
+  "dependencies": {
+    "@fontsource/cormorant-garamond": "^5.3.0",
+    "@fontsource/ibm-plex-mono": "^5.3.0",
+    "@fontsource/instrument-sans": "^5.3.0",
+    "next": "16.3.8",
+    "page-flip": "2.0.7",
+    "react": "19.2.8",
+    "react-dom": "19.2.8"
+  },
+  "devDependencies": {
+    "@types/node": "^22",
+    "@types/react": "^19",
+    "@types/react-dom": "^19",
+    "typescript": "^5"
+  }
+}
