@@ -2,6 +2,7 @@
  * Conținutul cărții.
  *
  * Paginile din PDF sunt pre-randate ca imagini WebP în /public:
+ *   /pages-sm/page-XX.webp  –  900 px, folosite în carte pe ecrane mici
  *   /pages/page-XX.webp     – 1600 px, folosite în carte
  *   /pages-hd/page-XX.webp  – 2800 px, folosite la mărire (lupă)
  *   /thumbs/page-XX.webp    – 360 px, miniaturi
@@ -51,6 +52,7 @@ export const indexToPdf = (i: number) => (i >= 2 && i <= PDF_PAGE_COUNT + 1 ? i 
 const pad = (n: number) => String(n).padStart(2, "0");
 export const pageSrc = (n: number) => `/pages/page-${pad(n)}.webp`;
 export const pageSrcHd = (n: number) => `/pages-hd/page-${pad(n)}.webp`;
+export const pageSrcSm = (n: number) => `/pages-sm/page-${pad(n)}.webp`;
 export const thumbSrc = (n: number) => `/thumbs/page-${pad(n)}.webp`;
 
 export type Chapter = {

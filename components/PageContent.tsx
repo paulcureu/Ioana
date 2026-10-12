@@ -1,9 +1,9 @@
 "use client";
 
-import { PAGE_ALT, STUDENT, pageSrc, type BookPage } from "@/lib/book";
+import { PAGE_ALT, STUDENT, pageSrc, pageSrcSm, type BookPage } from "@/lib/book";
 import { IconMagnify } from "./Icons";
 
-/** Linie de aur: casa în două ape cu fereastra circulară („ochiul” din proiectul de la Moigrad). */
+/** Desen în linie: casa în două ape cu fereastra circulară („ochiul” din proiectul de la Moigrad). */
 export function HouseEmblem({ className }: { className?: string }) {
   return (
     <svg className={className} viewBox="0 0 120 112" fill="none" aria-hidden="true" focusable="false">
@@ -36,9 +36,9 @@ function Cover() {
         </p>
         <HouseEmblem className="cover__emblem" />
         <div className="cover__titleblock">
-          <p className="cover__title foil">{STUDENT.title}</p>
+          <p className="cover__title deboss">{STUDENT.title}</p>
           <span className="cover__rule" />
-          <p className="cover__name foil">{STUDENT.name}</p>
+          <p className="cover__name deboss">{STUDENT.name}</p>
           <p className="cover__meta">
             {STUDENT.year} · {STUDENT.group} · {STUDENT.season}
           </p>
@@ -84,6 +84,8 @@ function PdfPage({ n, onZoom }: { n: number; onZoom: (n: number) => void }) {
     <div className="pdfpage">
       <img
         src={pageSrc(n)}
+        srcSet={`${pageSrcSm(n)} 900w, ${pageSrc(n)} 1600w`}
+        sizes="(max-width: 900px) 50vw, 46vw"
         alt={PAGE_ALT[n] ?? `Pagina ${n}`}
         draggable={false}
         decoding="async"

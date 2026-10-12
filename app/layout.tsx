@@ -29,7 +29,7 @@ export const metadata: Metadata = {
 };
 
 export const viewport: Viewport = {
-  themeColor: "#d6bc95",
+  themeColor: "#3c4939",
   width: "device-width",
   initialScale: 1,
   viewportFit: "cover",
@@ -39,7 +39,6 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
   return (
     <html lang="ro">
       <head>
-        <link rel="preload" as="image" href="/textures/desk-oak.webp" />
         <link rel="preload" as="image" href="/textures/linen.png" />
       </head>
       <body>{children}</body>

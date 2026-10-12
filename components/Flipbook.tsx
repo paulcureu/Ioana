@@ -16,7 +16,6 @@ import {
 } from "@/lib/book";
 import { playFlip } from "@/lib/sound";
 import PageContent from "./PageContent";
-import DeskProps from "./DeskProps";
 import Lightbox from "./Lightbox";
 import { ContactSheet, TocCard } from "./Panels";
 import {
@@ -34,35 +33,32 @@ import {
 
 /* ------------------------------------------------------------------ layout */
 
-type Layout = { pw: number; ph: number; b: number; gap: number; portrait: boolean; compact: boolean; short: boolean };
+type Layout = { pw: number; ph: number; b: number; compact: boolean; short: boolean };
 type Pose = "front" | "open" | "back";
+type Corner = "top" | "bottom";
 
 const OVERHANG = 0.022; // cât depășesc cartoanele copertei blocul de pagini
 
+/** Cartea e mereu deschisă pe două pagini (și pe telefon), cât de mare încape. */
 function computeLayout(vw: number, vh: number): Layout {
   const short = vh < 520;
   const compact = vw < 760 || short;
   const headerH = short ? 48 : compact ? 64 : 92;
   const controlsH = short ? 70 : compact ? 96 : 116;
-  const padX = compact ? 16 : 64;
-  const availW = Math.max(220, vw - padX * 2);
-  const availH = Math.max(150, vh - headerH - controlsH);
+  const padX = vw < 520 ? 8 : compact ? 16 : 64;
+  const availW = Math.max(200, vw - padX * 2);
+  const availH = Math.max(120, vh - headerH - controlsH);
   const k = 1 / PAGE_RATIO + 2 * OVERHANG;
-  const spreadPw = Math.min(availW / (2 + 2 * OVERHANG), availH / k);
-  const singlePw = Math.min(availW / (1 + 2 * OVERHANG), availH / k);
-  const portrait = !(spreadPw >= 400 || spreadPw >= 0.72 * singlePw);
-  const pw = Math.floor(portrait ? singlePw : spreadPw);
+  const pw = Math.floor(Math.min(availW / (2 + 2 * OVERHANG), availH / k));
   const ph = Math.round(pw / PAGE_RATIO);
-  const b = Math.max(4, Math.round(pw * OVERHANG));
-  const gap = Math.max(0, Math.floor((availH - ph) / 2)); // spațiul liber deasupra/dedesubtul cărții
-  return { pw, ph, b, gap, portrait, compact, short };
+  const b = Math.max(3, Math.round(pw * OVERHANG));
+  return { pw, ph, b, compact, short };
 }
 
-const poseFor = (idx: number, portrait: boolean): Pose =>
-  portrait ? "open" : idx <= 0 ? "front" : idx >= LAST_INDEX ? "back" : "open";
+const poseFor = (idx: number): Pose => (idx <= 0 ? "front" : idx >= LAST_INDEX ? "back" : "open");
 
-function visibleIndices(idx: number, portrait: boolean): number[] {
-  if (portrait || idx <= 0 || idx >= LAST_INDEX) return [idx];
+function visibleIndices(idx: number): number[] {
+  if (idx <= 0 || idx >= LAST_INDEX) return [idx];
   const left = idx % 2 === 1 ? idx : idx - 1;
   return [left, left + 1];
 }
@@ -80,14 +76,16 @@ const two = (n: number) => String(n).padStart(2, "0");
 /* --------------------------------------------------------------- component */
 
 export default function Flipbook() {
+  const stageRef = useRef<HTMLElement>(null);
   const hostRef = useRef<HTMLDivElement>(null);
+  const boardsRef = useRef<HTMLDivElement>(null);
   const pfRef = useRef<PageFlip | null>(null);
   const dirRef = useRef(0);
   const idxRef = useRef(0);
   const soundRef = useRef(true);
 
   const [layout, setLayout] = useState<Layout | null>(null);
-  const layoutRef = useRef<Layout | null>(null);
+  const [touchUI, setTouchUI] = useState<boolean | null>(null);
   const [pageEls, setPageEls] = useState<HTMLElement[] | null>(null);
   const [ready, setReady] = useState(false);
   const [idx, setIdx] = useState(0);
@@ -102,14 +100,12 @@ export default function Flipbook() {
   useLayoutEffect(() => {
     const measure = () => {
       const l = computeLayout(window.innerWidth, window.innerHeight);
-      layoutRef.current = l;
       setLayout((prev) =>
-        prev && prev.pw === l.pw && prev.portrait === l.portrait && prev.compact === l.compact && prev.short === l.short
-          ? { ...prev, gap: l.gap }
-          : l
+        prev && prev.pw === l.pw && prev.compact === l.compact && prev.short === l.short ? prev : l
       );
     };
     measure();
+    setTouchUI(window.matchMedia("(hover: none) and (pointer: coarse)").matches);
     let raf = 0;
     const onResize = () => {
       cancelAnimationFrame(raf);
@@ -125,8 +121,7 @@ export default function Flipbook() {
   /* ---- preferences ---- */
   useEffect(() => {
     try {
-      const v = window.localStorage.getItem("carte:sunet");
-      if (v === "0") {
+      if (window.localStorage.getItem("carte:sunet") === "0") {
         soundRef.current = false;
         setSound(false);
       }
@@ -154,15 +149,14 @@ export default function Flipbook() {
     const i = pf.getCurrentPageIndex();
     idxRef.current = i;
     setIdx(i);
-    setPose(poseFor(i, layoutRef.current?.portrait ?? false));
-    dirRef.current = 0;
+    setPose(poseFor(i));
   }, []);
 
   /* ---- init page-flip once we have elements + a size ---- */
-  const hasLayout = layout !== null;
+  const canInit = layout !== null && touchUI !== null;
   useEffect(() => {
     const host = hostRef.current;
-    if (!pageEls || !hasLayout || !host) return;
+    if (!pageEls || !canInit || !host) return;
     let disposed = false;
     let pf: PageFlip | null = null;
     const block = document.createElement("div");
@@ -172,7 +166,6 @@ export default function Flipbook() {
     import("page-flip").then(({ PageFlip }) => {
       if (disposed) return;
       const reduce = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
-      const start = readHash();
       pf = new PageFlip(block, {
         width: 3510,
         height: 2482,
@@ -183,48 +176,41 @@ export default function Flipbook() {
         maxHeight: 6000,
         autoSize: true,
         showCover: true,
-        usePortrait: true,
+        usePortrait: false, // mereu două pagini, și pe telefon
         drawShadow: true,
-        maxShadowOpacity: 0.42,
-        flippingTime: reduce ? 350 : 900,
+        maxShadowOpacity: 0.4,
+        flippingTime: reduce ? 300 : touchUI ? 560 : 800,
         mobileScrollSupport: false,
         clickEventForward: true,
-        showPageCorners: true,
-        swipeDistance: 24,
-        startPage: start,
+        // pe ecrane tactile gesturile le tratăm noi (fără întârzierea de 250 ms a bibliotecii)
+        useMouseEvents: !touchUI,
+        showPageCorners: !touchUI,
+        swipeDistance: 20,
+        startPage: readHash(),
       });
       pf.loadFromHTML(pageEls);
       block.style.minWidth = "0px";
       block.style.minHeight = "0px";
       block.style.maxWidth = "none";
-      if (layoutRef.current?.portrait) {
-        pf.getSettings().minWidth = 1e6;
-        pf.update();
-        if (start) pf.turnToPage(start); // în modul o-pagină, revino exact la pagina cerută
-      }
 
       pf.on("flip", () => syncFromBook(pf!));
       pf.on("changeState", (e) => {
-        const st = e.data;
-        if (st === "flipping") {
+        if (e.data === "flipping") {
           const cur = idxRef.current;
           const dir = dirRef.current;
-          const portrait = layoutRef.current?.portrait ?? false;
-          if (!portrait && dir !== 0) {
+          if (dir !== 0) {
             if ((cur === 0 && dir > 0) || (cur >= LAST_INDEX && dir < 0)) setPose("open");
             else if (cur > 0 && cur <= 2 && dir < 0) setPose("front");
             else if (cur < LAST_INDEX && cur >= LAST_INDEX - 2 && dir > 0) setPose("back");
           }
           if (soundRef.current) {
-            const hard =
-              cur === 0 || cur === LAST_INDEX || (dir < 0 && cur <= 2 && !portrait) || (dir > 0 && cur >= LAST_INDEX - 2 && !portrait);
+            const hard = cur === 0 || cur === LAST_INDEX || (dir < 0 && cur <= 2) || (dir > 0 && cur >= LAST_INDEX - 2);
             playFlip(hard);
           }
-        } else if (st === "read") {
+        } else if (e.data === "read") {
           syncFromBook(pf!);
         }
       });
-      pf.on("changeOrientation", () => syncFromBook(pf!));
       pfRef.current = pf;
       syncFromBook(pf);
       requestAnimationFrame(() => setReady(true));
@@ -236,53 +222,122 @@ export default function Flipbook() {
       if (pf) pf.destroy();
       else block.remove();
     };
-  }, [pageEls, hasLayout, syncFromBook]);
+  }, [pageEls, canInit, touchUI, syncFromBook]);
 
   /* ---- keep page-flip in sync with our computed size ---- */
   useLayoutEffect(() => {
     const pf = pfRef.current;
     if (!pf || !layout) return;
-    pf.getSettings().minWidth = layout.portrait ? 1e6 : 1;
     pf.update();
-    setPose(poseFor(pf.getCurrentPageIndex(), layout.portrait));
   }, [layout]);
 
   /* ---- url hash ---- */
   useEffect(() => {
     if (!ready) return;
-    const vis = visibleIndices(idx, layout?.portrait ?? false).map(indexToPdf).filter((n): n is number => n != null);
+    const vis = visibleIndices(idx).map(indexToPdf).filter((n): n is number => n != null);
     const url = vis.length ? `#pagina-${vis[0]}` : window.location.pathname + window.location.search;
     window.history.replaceState(null, "", url);
-  }, [idx, ready, layout?.portrait]);
+  }, [idx, ready]);
 
-  /* ---- navigation ---- */
-  const canFlip = () => {
+  /* ---- navigation ----
+     Un nou click / swipe în timpul unei animații o termină instant și o pornește pe următoarea,
+     așa că poți răsfoi repede, fără să aștepți. */
+  const next = useCallback((corner: Corner = "top") => {
     const pf = pfRef.current;
-    return pf && pf.getState() === "read" ? pf : null;
-  };
-  const next = useCallback(() => {
-    const pf = canFlip();
-    if (!pf || idxRef.current >= LAST_INDEX) return;
+    if (!pf || pf.getState() === "user_fold") return;
+    if (pf.getState() === "read" && idxRef.current >= LAST_INDEX) return;
     dirRef.current = 1;
-    pf.flipNext();
+    pf.flipNext(corner);
   }, []);
-  const prev = useCallback(() => {
-    const pf = canFlip();
-    if (!pf || idxRef.current <= 0) return;
+  const prev = useCallback((corner: Corner = "top") => {
+    const pf = pfRef.current;
+    if (!pf || pf.getState() === "user_fold") return;
+    if (pf.getState() === "read" && idxRef.current <= 0) return;
     dirRef.current = -1;
-    pf.flipPrev();
+    pf.flipPrev(corner);
   }, []);
   const goToIndex = useCallback((target: number, animate = true) => {
     const pf = pfRef.current;
     if (!pf) return;
-    const portrait = layoutRef.current?.portrait ?? false;
     const cur = idxRef.current;
-    if (visibleIndices(cur, portrait).includes(target)) return;
+    if (visibleIndices(cur).includes(target)) return;
     dirRef.current = target > cur ? 1 : -1;
-    if (animate && pf.getState() === "read") pf.flip(target);
+    if (animate && pf.getState() !== "user_fold") pf.flip(target);
     else pf.turnToPage(target);
   }, []);
   const goToPdf = useCallback((n: number) => goToIndex(pdfToIndex(n)), [goToIndex]);
+
+  /* ---- gesturi tactile: tap pe pagină, swipe oriunde pe ecran ---- */
+  useEffect(() => {
+    const stage = stageRef.current;
+    if (!touchUI || !stage) return;
+    let s: { x: number; y: number; t: number; fired: boolean } | null = null;
+
+    const cornerAt = (y: number): Corner => {
+      const r = hostRef.current?.getBoundingClientRect();
+      return r && y > r.top + r.height / 2 ? "bottom" : "top";
+    };
+    const onStart = (e: TouchEvent) => {
+      const target = e.target as HTMLElement | null;
+      if (e.touches.length !== 1 || target?.closest("button, a")) {
+        s = null;
+        return;
+      }
+      const t = e.touches[0];
+      s = { x: t.clientX, y: t.clientY, t: performance.now(), fired: false };
+    };
+    const onMove = (e: TouchEvent) => {
+      if (!s) return;
+      const t = e.touches[0];
+      const dx = t.clientX - s.x;
+      const dy = t.clientY - s.y;
+      if (Math.abs(dx) > 6 && Math.abs(dx) > Math.abs(dy) && e.cancelable) e.preventDefault();
+      // pagina se întoarce imediat ce degetul a trecut pragul — nu la ridicarea lui
+      if (!s.fired && Math.abs(dx) > 24 && Math.abs(dx) > Math.abs(dy) * 1.1) {
+        s.fired = true;
+        if (dx < 0) next(cornerAt(s.y));
+        else prev(cornerAt(s.y));
+      }
+    };
+    const onEnd = (e: TouchEvent) => {
+      if (!s) return;
+      const t = e.changedTouches[0];
+      const dx = t.clientX - s.x;
+      const dy = t.clientY - s.y;
+      const quick = performance.now() - s.t < 600;
+      if (!s.fired && quick && Math.abs(dx) < 12 && Math.abs(dy) < 12) {
+        const book = boardsRef.current?.getBoundingClientRect();
+        const host = hostRef.current?.getBoundingClientRect();
+        const pad = 12;
+        if (
+          book &&
+          host &&
+          t.clientX >= book.left - pad &&
+          t.clientX <= book.right + pad &&
+          t.clientY >= book.top - pad &&
+          t.clientY <= book.bottom + pad
+        ) {
+          const spine = host.left + host.width / 2;
+          if (t.clientX < spine) prev(cornerAt(t.clientY));
+          else next(cornerAt(t.clientY));
+        }
+      }
+      s = null;
+    };
+    const onCancel = () => {
+      s = null;
+    };
+    stage.addEventListener("touchstart", onStart, { passive: true });
+    stage.addEventListener("touchmove", onMove, { passive: false });
+    stage.addEventListener("touchend", onEnd);
+    stage.addEventListener("touchcancel", onCancel);
+    return () => {
+      stage.removeEventListener("touchstart", onStart);
+      stage.removeEventListener("touchmove", onMove);
+      stage.removeEventListener("touchend", onEnd);
+      stage.removeEventListener("touchcancel", onCancel);
+    };
+  }, [touchUI, next, prev]);
 
   /* ---- link-uri de tip #pagina-7 deschise în aceeași filă ---- */
   useEffect(() => {
@@ -319,8 +374,7 @@ export default function Flipbook() {
   }, [panel, zoomPage, next, prev, goToIndex]);
 
   /* ---- derived ---- */
-  const portrait = layout?.portrait ?? false;
-  const visible = useMemo(() => visibleIndices(idx, portrait), [idx, portrait]);
+  const visible = useMemo(() => visibleIndices(idx), [idx]);
   const visiblePdf = visible.map(indexToPdf).filter((n): n is number => n != null);
   const chapter = chapterForPdf(visiblePdf[visiblePdf.length - 1] ?? null) ?? chapterForPdf(visiblePdf[0] ?? null);
 
@@ -363,10 +417,7 @@ export default function Flipbook() {
   const closeZoom = () => {
     if (zoomPage != null) {
       const pdfIdx = pdfToIndex(zoomPage);
-      if (!visibleIndices(idxRef.current, layoutRef.current?.portrait ?? false).includes(pdfIdx)) {
-        dirRef.current = 0;
-        pfRef.current?.turnToPage(pdfIdx);
-      }
+      if (!visibleIndices(idxRef.current).includes(pdfIdx)) pfRef.current?.turnToPage(pdfIdx);
     }
     setZoomPage(null);
   };
@@ -375,13 +426,11 @@ export default function Flipbook() {
   const pw = layout?.pw ?? 0;
   const ph = layout?.ph ?? 0;
   const b = layout?.b ?? 0;
-  const bookW = portrait ? pw : pw * 2;
+  const bookW = pw * 2;
   const shiftX = pose === "front" ? -pw / 2 : pose === "back" ? pw / 2 : 0;
 
   let frame: { l: number; t: number; w: number; h: number };
-  if (portrait) {
-    frame = idx <= 0 || idx >= LAST_INDEX ? { l: 0, t: 0, w: pw, h: ph } : { l: 0, t: -b, w: pw + b, h: ph + 2 * b };
-  } else if (pose === "front") frame = { l: pw, t: 0, w: pw, h: ph };
+  if (pose === "front") frame = { l: pw, t: 0, w: pw, h: ph };
   else if (pose === "back") frame = { l: 0, t: 0, w: pw, h: ph };
   else frame = { l: -b, t: -b, w: pw * 2 + 2 * b, h: ph + 2 * b };
 
@@ -390,20 +439,19 @@ export default function Flipbook() {
   const maxEdge = Math.max(2, b * 0.8);
   const edgeL = Math.round(1.5 + turned * maxEdge);
   const edgeR = Math.round(1.5 + (1 - turned) * maxEdge);
-  const showEdges = !portrait && pose === "open";
-
-  const fullyClosed = idx <= 0;
 
   const vars = {
     "--pw": `${pw}px`,
     "--ph": `${ph}px`,
     "--b": `${b}px`,
-    "--gap": `${layout?.gap ?? 0}px`,
   } as React.CSSProperties;
 
   return (
-    <main className={`desk${layout?.compact ? " is-compact" : ""}${layout?.short ? " is-short" : ""}`} style={vars}>
-      <div className="desk__light" aria-hidden="true" />
+    <main
+      className={`desk${layout?.compact ? " is-compact" : ""}${layout?.short ? " is-short" : ""}${touchUI ? " is-touch" : ""}`}
+      style={vars}
+    >
+      <div className="desk__shade" aria-hidden="true" />
 
       <header className="topbar">
         <div className="topbar__id">
@@ -417,23 +465,19 @@ export default function Flipbook() {
         </p>
       </header>
 
-      <section className="stage" aria-label="Portofoliu — carte">
+      <section ref={stageRef} className="stage" aria-label="Portofoliu — carte">
         {layout && (
-          <div
-            className={`stage__box${portrait ? " is-portrait" : ""}`}
-            style={{ width: bookW, height: ph }}
-          >
-            {!layout.short && <DeskProps />}
-
+          <div className="stage__box" style={{ width: bookW, height: ph }}>
             <div
               className={`book pose-${pose}${ready ? " is-ready" : ""}`}
               style={{ transform: `translate3d(${shiftX}px,0,0)` }}
             >
               <div
+                ref={boardsRef}
                 className={`book__boards${pose === "open" ? " is-open" : ""}`}
                 style={{ left: frame.l, top: frame.t, width: frame.w, height: frame.h }}
               />
-              {showEdges && (
+              {pose === "open" && (
                 <>
                   <div className="book__edge book__edge--left" style={{ width: edgeL }} />
                   <div className="book__edge book__edge--right" style={{ width: edgeR }} />
@@ -441,21 +485,15 @@ export default function Flipbook() {
               )}
               <div
                 ref={hostRef}
-                className={`book__host${portrait ? " is-portrait" : ""}`}
+                className="book__host"
                 style={{ width: bookW }}
                 onPointerDownCapture={(e) => {
+                  if (e.pointerType !== "mouse") return;
                   const r = e.currentTarget.getBoundingClientRect();
                   dirRef.current = e.clientX - r.left < r.width / 2 ? -1 : 1;
                 }}
               />
             </div>
-
-            <p
-              className={`hint mono${fullyClosed && ready && layout.gap > 44 ? " is-visible" : ""}`}
-              aria-hidden={!fullyClosed}
-            >
-              Apasă pe copertă<span className="hide-sm"> sau trage de colț</span> ca să deschizi cartea
-            </p>
           </div>
         )}
       </section>
@@ -469,13 +507,27 @@ export default function Flipbook() {
         </div>
         <div className="tray__row">
           <div className="tray__group">
-            <button type="button" className="iconbtn" onClick={prev} disabled={idx <= 0} aria-label="Pagina anterioară" title="Înapoi (←)">
+            <button
+              type="button"
+              className="iconbtn"
+              onClick={() => prev()}
+              disabled={idx <= 0}
+              aria-label="Pagina anterioară"
+              title="Înapoi (←)"
+            >
               <IconPrev />
             </button>
             <p className="tray__where mono" aria-live="polite">
               {where}
             </p>
-            <button type="button" className="iconbtn" onClick={next} disabled={idx >= LAST_INDEX} aria-label="Pagina următoare" title="Înainte (→)">
+            <button
+              type="button"
+              className="iconbtn"
+              onClick={() => next()}
+              disabled={idx >= LAST_INDEX}
+              aria-label="Pagina următoare"
+              title="Înainte (→)"
+            >
               <IconNext />
             </button>
           </div>
